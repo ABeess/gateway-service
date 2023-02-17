@@ -1,0 +1,68 @@
+name: essential-service
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: actions/checkout
+        uses: actions/checkout/@v2
+      - name: setup node
+        uses: actions/setup-node@v1
+        with:
+          node-version: 16
+      - name: get versions
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+      # - name: release
+      #   id: release
+      #   uses: actions/create-release@v1.1.0
+      #   env: 
+      #     GITHUB_TOKEN: ${{secrets.TOKEN_KEY}}
+      #   with:
+      #     tag_name: v${{ env.VERSION }}
+      #     release_name: v${{ env.VERSION }}
+      #     # draft: true
+      #     body: "DEPLOY"
+      #     prerelease: false
+      - name: compress file 
+        run: chmod +x ./compress.sh && ./compress.sh
+        shell: bash
+      - name: action/login-hub
+        uses: docker/login-action@v1
+        with:
+          username: abeesdevjs
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+      - name: action/setup-buildx
+        uses: docker/setup-buildx-action@v1
+        id: buildx
+      - name: build and push docker
+        uses: docker/build-push-action@v2
+        id: docker_build
+        with:
+          context: ./docker
+          file: ./docker/Dockerfile
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: abeesdevjs/gateway-service:${{ env.VERSION }}
+      - name: copy file
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT }}
+          source: "docker/docker-compose.yml,docker/deploy.sh"
+          target: "service"
+          strip_components: 1
+      - name: ssh aws ec2
+        uses: appleboy/ssh-action@v0.1.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT }}
+          script: |
+            export TAG=${{ env.VERSION }}
+            cd ~/service && sudo chmod +x ./deploy.sh && ./deploy.sh
